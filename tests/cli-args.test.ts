@@ -75,6 +75,27 @@ describe("parseCliArgs", () => {
 		});
 	});
 
+	it("parses oauth2 client credentials auth", () => {
+		const config = parseCliArgs([
+			"https://api.example.com/graphql",
+			"--oauth2-token-url",
+			"https://auth.example.com/oauth/token",
+			"--oauth2-client-id",
+			"client-id",
+			"--oauth2-client-secret",
+			"client-secret",
+			"--oauth2-scope",
+			"read:graphql",
+		]);
+		expect(config?.auth).toEqual({
+			type: "oauth2-client-credentials",
+			tokenUrl: "https://auth.example.com/oauth/token",
+			clientId: "client-id",
+			clientSecret: "client-secret",
+			scope: "read:graphql",
+		});
+	});
+
 	it("parses --schema-cache", () => {
 		const config = parseCliArgs([
 			"https://api.example.com/graphql",

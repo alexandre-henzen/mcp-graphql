@@ -41,7 +41,14 @@ export interface McpGraphqlConfig {
 
 export type AuthConfig =
 	| { type: "bearer"; token: string }
-	| { type: "api-key"; name: string; value: string; in: "header" | "query" };
+	| { type: "api-key"; name: string; value: string; in: "header" | "query" }
+	| {
+			type: "oauth2-client-credentials";
+			tokenUrl: string;
+			clientId: string;
+			clientSecret: string;
+			scope?: string;
+	  };
 
 export const DEFAULT_CONFIG = {
 	timeout: 30_000,

@@ -14,6 +14,10 @@ OPTIONS
   --header, -H <name:value>   Add custom header (repeatable)
   --bearer <token>             Bearer token auth
   --api-key <name:value:in>    API key auth (name:value:header or name:value:query)
+  --oauth2-token-url <url>     OAuth2 token URL (client credentials)
+  --oauth2-client-id <id>      OAuth2 client ID
+  --oauth2-client-secret <sec> OAuth2 client secret
+  --oauth2-scope <scope>       OAuth2 scope (optional)
   --include <pattern>          Include only matching operations (glob, repeatable)
   --exclude <pattern>          Exclude matching operations (glob, repeatable)
   --prefix <name>              Prefix tool names (e.g. "github")
@@ -48,6 +52,10 @@ export function parseCliArgs(argv: string[]): McpGraphqlConfig | null {
 			header: { type: "string", short: "H", multiple: true },
 			bearer: { type: "string" },
 			"api-key": { type: "string" },
+			"oauth2-token-url": { type: "string" },
+			"oauth2-client-id": { type: "string" },
+			"oauth2-client-secret": { type: "string" },
+			"oauth2-scope": { type: "string" },
 			include: { type: "string", multiple: true },
 			exclude: { type: "string", multiple: true },
 			prefix: { type: "string" },
@@ -91,6 +99,18 @@ export function parseCliArgs(argv: string[]): McpGraphqlConfig | null {
 	let auth: McpGraphqlConfig["auth"];
 	if (values.bearer) {
 		auth = { type: "bearer", token: values.bearer };
+	} else if (
+		values["oauth2-token-url"] &&
+		values["oauth2-client-id"] &&
+		values["oauth2-client-secret"]
+	) {
+		auth = {
+			type: "oauth2-client-credentials",
+			tokenUrl: values["oauth2-token-url"],
+			clientId: values["oauth2-client-id"],
+			clientSecret: values["oauth2-client-secret"],
+			scope: values["oauth2-scope"],
+		};
 	} else if (values["api-key"]) {
 		const parts = values["api-key"].split(":");
 		if (parts.length >= 3) {
