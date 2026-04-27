@@ -1,11 +1,14 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
 	CallToolRequestSchema,
 	ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import { createServer as createHttpServer } from "node:http";
 import type { McpGraphqlConfig } from "./config/types.js";
 import { DEFAULT_CONFIG } from "./config/types.js";
+import { resolveAuthEndpointAndHeaders } from "./config/auth.js";
 import { introspect, extractFields } from "./parser/introspection.js";
 import {
 	loadSchemaCache,
@@ -22,42 +25,37 @@ export async function createServer(
 	config: McpGraphqlConfig,
 ): Promise<Server> {
 	const cfg = { ...DEFAULT_CONFIG, ...config };
-
-	// Build request headers (for both introspection and execution)
-	const requestHeaders: Record<string, string> = { ...cfg.headers };
-	if (cfg.auth) {
-		switch (cfg.auth.type) {
-			case "bearer":
-				requestHeaders.Authorization = `Bearer ${cfg.auth.token}`;
-				break;
-			case "api-key":
-				if (cfg.auth.in === "header") {
-					requestHeaders[cfg.auth.name] = cfg.auth.value;
-				}
-				break;
-		}
-	}
+	const authResolved = await resolveAuthEndpointAndHeaders(
+		cfg.endpoint,
+		cfg.auth,
+		cfg.timeout,
+	);
+	const endpoint = authResolved.endpoint;
+	const requestHeaders: Record<string, string> = {
+		...cfg.headers,
+		...authResolved.headers,
+	};
 
 	// Introspect schema (with optional caching)
 	let schema;
 	if (cfg.schemaCache && !cfg.forceRefresh) {
-		schema = loadSchemaCache(cfg.schemaCache, cfg.endpoint);
+		schema = loadSchemaCache(cfg.schemaCache, endpoint);
 	}
 	if (!schema) {
 		if (cfg.forceRefresh && cfg.schemaCache) {
-			logger.info(`Force refresh: ignoring cache, re-introspecting ${cfg.endpoint}...`);
+			logger.info(`Force refresh: ignoring cache, re-introspecting ${endpoint}...`);
 		} else {
-			logger.info(`Introspecting ${cfg.endpoint}...`);
+			logger.info(`Introspecting ${endpoint}...`);
 		}
 		if (cfg.schemaCache) {
 			schema = await saveSchemaCache(
 				cfg.schemaCache,
-				cfg.endpoint,
+				endpoint,
 				requestHeaders,
 				cfg.timeout,
 			);
 		} else {
-			schema = await introspect(cfg.endpoint, requestHeaders, cfg.timeout);
+			schema = await introspect(endpoint, requestHeaders, cfg.timeout);
 		}
 	}
 
@@ -130,7 +128,7 @@ export async function createServer(
 			const response = await executeGraphql(
 				{ query, variables },
 				{
-					endpoint: cfg.endpoint,
+					endpoint,
 					headers: cfg.headers,
 					auth: cfg.auth,
 					timeout: cfg.timeout,
@@ -159,10 +157,76 @@ export async function startServer(config: McpGraphqlConfig): Promise<void> {
 	const server = await createServer(config);
 
 	if (config.transport === "sse") {
-		logger.warn("SSE transport not yet implemented, falling back to stdio");
+		const port = config.port ?? Number.parseInt(process.env.PORT ?? "3000", 10);
+		const transport = new StreamableHTTPServerTransport({
+			sessionIdGenerator: undefined, // stateless mode for horizontal scaling
+		});
+		await server.connect(transport);
+
+		const httpServer = createHttpServer(async (req, res) => {
+			try {
+				if (!req.url) {
+					res.writeHead(400).end("Missing request URL");
+					return;
+				}
+
+				const url = new URL(req.url, `http://${req.headers.host ?? "localhost"}`);
+				if (req.method === "GET" && url.pathname === "/health") {
+					res.writeHead(200, { "Content-Type": "application/json" });
+					res.end(JSON.stringify({ status: "ok" }));
+					return;
+				}
+
+				if (url.pathname !== "/mcp") {
+					res.writeHead(404).end("Not Found");
+					return;
+				}
+
+				if (req.method === "POST") {
+					const bodyRaw = await readRequestBody(req);
+					const parsedBody = bodyRaw ? JSON.parse(bodyRaw) : undefined;
+					await transport.handleRequest(req, res, parsedBody);
+					return;
+				}
+
+				if (req.method === "GET" || req.method === "DELETE") {
+					await transport.handleRequest(req, res);
+					return;
+				}
+
+				res.writeHead(405).end("Method Not Allowed");
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				logger.error(`HTTP transport error: ${message}`);
+				if (!res.headersSent) {
+					res.writeHead(500, { "Content-Type": "application/json" });
+					res.end(
+						JSON.stringify({
+							jsonrpc: "2.0",
+							error: { code: -32603, message: "Internal server error" },
+							id: null,
+						}),
+					);
+				}
+			}
+		});
+
+		await new Promise<void>((resolve) => {
+			httpServer.listen(port, () => resolve());
+		});
+		logger.info(`MCP Streamable HTTP server running on port ${port} (/mcp)`);
+		return;
 	}
 
 	const transport = new StdioServerTransport();
 	await server.connect(transport);
 	logger.info("MCP server running on stdio");
+}
+
+async function readRequestBody(req: import("node:http").IncomingMessage): Promise<string> {
+	const chunks: Buffer[] = [];
+	for await (const chunk of req) {
+		chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+	}
+	return Buffer.concat(chunks).toString("utf8");
 }

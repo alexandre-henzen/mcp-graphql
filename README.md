@@ -38,6 +38,7 @@ That's it. Claude can now query countries, continents, and languages.
 - **Flat parameter schemas** — nested `input` objects are flattened for better LLM accuracy
 - **Smart truncation** — large responses are intelligently pruned (array slicing + depth limiting)
 - **Auth support** — Bearer tokens, API keys (header or query)
+  - OAuth2 client credentials is also supported via CLI flags
 - **Retry logic** — automatic retries on 429/5xx with exponential backoff
 - **Include/exclude filters** — expose only the operations you want
 - **Schema caching** — skip re-introspection with `--schema-cache` for faster startup
@@ -56,6 +57,13 @@ npx graphql-to-mcp https://api.github.com/graphql --bearer ghp_xxxxx
 
 # With API key
 npx graphql-to-mcp https://api.example.com/graphql --api-key "X-API-Key:your-key:header"
+
+# With OAuth2 client credentials
+npx graphql-to-mcp https://api.example.com/graphql \
+  --oauth2-token-url "https://auth.example.com/oauth2/token" \
+  --oauth2-client-id "your-client-id" \
+  --oauth2-client-secret "your-client-secret" \
+  --oauth2-scope "read:graphql"
 
 # Filter operations
 npx graphql-to-mcp https://api.example.com/graphql --include "get*" --exclude "internal*"
@@ -124,13 +132,17 @@ LLMs are significantly better at filling flat key-value parameters than deeply n
 |--------|-------------|---------|
 | `--bearer <token>` | Bearer token auth | — |
 | `--api-key <name:value:in>` | API key auth | — |
+| `--oauth2-token-url <url>` | OAuth2 token URL (client credentials) | — |
+| `--oauth2-client-id <id>` | OAuth2 client ID | — |
+| `--oauth2-client-secret <secret>` | OAuth2 client secret | — |
+| `--oauth2-scope <scope>` | OAuth2 scope (optional) | — |
 | `-H, --header <name:value>` | Custom header (repeatable) | — |
 | `--include <pattern>` | Include only matching operations | all |
 | `--exclude <pattern>` | Exclude matching operations | none |
 | `--prefix <name>` | Tool name prefix | — |
 | `--timeout <ms>` | Request timeout | 30000 |
 | `--max-retries <n>` | Retry on 429/5xx | 3 |
-| `--transport <stdio\|sse>` | MCP transport | stdio |
+| `--transport <stdio\|sse>` | MCP transport (`sse` starts HTTP server at `/mcp`) | stdio |
 | `--schema-cache <path>` | Save/load introspection cache | — |
 | `--force-refresh` | Ignore cache, re-introspect | false |
 | `--mutation-safety <mode>` | `warn` \| `safe` \| `unrestricted` | warn |
@@ -202,6 +214,26 @@ Pair with [mcp-openapi](https://www.npmjs.com/package/mcp-openapi) to give Claud
 ## Related
 
 - [mcp-openapi](https://www.npmjs.com/package/mcp-openapi) — Same zero-config approach for REST/OpenAPI APIs
+
+## Deploy (Railway / Render / Fly.io)
+
+For cloud hosting, run in HTTP mode:
+
+```bash
+npx graphql-to-mcp https://api.example.com/graphql \
+  --transport sse \
+  --port ${PORT:-3000}
+```
+
+- MCP endpoint: `POST/GET/DELETE /mcp`
+- Health check: `GET /health`
+- On Railway/Render/Fly.io, set the service port env (`PORT`) and pass your auth flags (`--bearer` or OAuth2 flags).
+
+Example Docker start command:
+
+```bash
+graphql-to-mcp https://api.example.com/graphql --transport sse --port $PORT
+```
 
 ## License
 

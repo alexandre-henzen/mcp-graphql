@@ -1,4 +1,5 @@
 import type { AuthConfig } from "../config/types.js";
+import { resolveAuthEndpointAndHeaders } from "../config/auth.js";
 import { logger } from "../utils/logger.js";
 
 export interface GraphqlRequest {
@@ -14,6 +15,7 @@ export interface GraphqlResponse {
 export interface HttpClientOptions {
 	endpoint: string;
 	headers?: Record<string, string>;
+	authHeaders?: Record<string, string>;
 	auth?: AuthConfig;
 	timeout?: number;
 	maxRetries?: number;
@@ -23,8 +25,18 @@ export async function executeGraphql(
 	request: GraphqlRequest,
 	options: HttpClientOptions,
 ): Promise<GraphqlResponse> {
-	const { endpoint, timeout = 30_000, maxRetries = 3 } = options;
-	const headers = buildHeaders(options);
+	const { timeout = 30_000, maxRetries = 3 } = options;
+	const authResolved = await resolveAuthEndpointAndHeaders(
+		options.endpoint,
+		options.auth,
+		timeout,
+	);
+	const endpoint = authResolved.endpoint;
+	const headers = buildHeaders({
+		...options,
+		endpoint,
+		authHeaders: authResolved.headers,
+	});
 
 	let lastError: Error | null = null;
 
@@ -86,20 +98,8 @@ function buildHeaders(options: HttpClientOptions): Record<string, string> {
 	const headers: Record<string, string> = {
 		"Content-Type": "application/json",
 		...options.headers,
+		...options.authHeaders,
 	};
-
-	if (options.auth) {
-		switch (options.auth.type) {
-			case "bearer":
-				headers.Authorization = `Bearer ${options.auth.token}`;
-				break;
-			case "api-key":
-				if (options.auth.in === "header") {
-					headers[options.auth.name] = options.auth.value;
-				}
-				break;
-		}
-	}
 
 	return headers;
 }

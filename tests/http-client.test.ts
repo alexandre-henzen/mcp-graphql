@@ -58,6 +58,77 @@ describe("executeGraphql", () => {
 		);
 	});
 
+	it("does not append API key to headers when auth is query-based", async () => {
+		const mockResponse = {
+			ok: true,
+			status: 200,
+			json: async () => ({ data: {} }),
+		};
+		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockResponse));
+
+		await executeGraphql(
+			{ query: "{ me { id } }", variables: {} },
+			{
+				endpoint: "https://example.com/graphql?apiKey=secret",
+				auth: { type: "api-key", name: "apiKey", value: "secret", in: "query" },
+			},
+		);
+
+		expect(fetch).toHaveBeenCalledWith(
+			"https://example.com/graphql?apiKey=secret",
+			expect.objectContaining({
+				headers: expect.not.objectContaining({
+					apiKey: "secret",
+				}),
+			}),
+		);
+	});
+
+	it("fetches OAuth2 token before executing request", async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce({
+				ok: true,
+				status: 200,
+				json: async () => ({ access_token: "oauth-token", expires_in: 3600 }),
+			})
+			.mockResolvedValueOnce({
+				ok: true,
+				status: 200,
+				json: async () => ({ data: { ok: true } }),
+			});
+		vi.stubGlobal("fetch", fetchMock);
+
+		const result = await executeGraphql(
+			{ query: "{ ok }", variables: {} },
+			{
+				endpoint: "https://example.com/graphql",
+				auth: {
+					type: "oauth2-client-credentials",
+					tokenUrl: "https://auth.example.com/token",
+					clientId: "id",
+					clientSecret: "secret",
+				},
+			},
+		);
+
+		expect(result).toEqual({ data: { ok: true } });
+		expect(fetchMock).toHaveBeenNthCalledWith(
+			1,
+			"https://auth.example.com/token",
+			expect.objectContaining({ method: "POST" }),
+		);
+		expect(fetchMock).toHaveBeenNthCalledWith(
+			2,
+			"https://example.com/graphql",
+			expect.objectContaining({
+				headers: expect.objectContaining({
+					Authorization: "Bearer oauth-token",
+				}),
+			}),
+		);
+	});
+
 	it("throws on non-retryable HTTP error", async () => {
 		const mockResponse = {
 			ok: false,
